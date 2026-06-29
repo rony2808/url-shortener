@@ -1,0 +1,46 @@
+services:
+  database:
+    image: postgres:16
+    env_file:
+      - .env
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  flask:
+    build: ./flask
+    env_file:
+      - .env
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000')"]
+      interval: 10s 
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      flask:
+        condition: service_healthy
+    
+volumes:
+  db_data:

@@ -1,0 +1,71 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: your_user
+          POSTGRES_PASSWORD: your_password
+          POSTGRES_DB: your_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - name: Retrieve the code
+        uses: actions/checkout@v5
+      - name: Install python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        working-directory: flask
+        run: pip install -r requirements.txt
+      - name: Initialize the database
+        env:
+          PGPASSWORD: your_password
+        run: psql -h 127.0.0.1 -U your_user -d your_db -f init.sql
+      - name: Run test
+        working-directory: flask
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: your_user
+          DB_PASSWORD: your_password
+          DB_NAME: your_db
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+        run: pytest -v
+        
+      - name: Connection to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: build Docker image flask
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/url-shortener-flask:latest ./flask
+      - name: build Docker image nginx
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/url-shortener-nginx:latest ./nginx
+
+      - name: push docker image flask
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/url-shortener-flask:latest
+      - name: push docker image nginx
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/url-shortener-nginx:latest 
