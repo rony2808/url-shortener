@@ -1,8 +1,10 @@
 # URL Shortener
 
-A containerized URL shortening service (bit.ly-style) with an automated CI/CD pipeline.
+A containerized URL shortening service (bit.ly-style) with an automated CI/CD pipeline, deployed to AWS with Terraform.
 
 When a long URL is submitted, the API generates a short code; visiting that code redirects to the original URL. The number of clicks per link is tracked in real time.
+
+> **Live demo available on request.** The environment is provisioned on demand via Terraform.
 
 ## Architecture
 
@@ -29,6 +31,7 @@ Using two data stores is a deliberate choice: PostgreSQL durably stores the code
 ### Examples
 
 Create a short link:
+
 ```bash
 curl -X POST http://localhost/shorten \
   -H "Content-Type: application/json" \
@@ -37,6 +40,7 @@ curl -X POST http://localhost/shorten \
 ```
 
 Check statistics:
+
 ```bash
 curl http://localhost/stats/jMRYvK
 # => {"url": "https://www.google.com", "clicks": 2}
@@ -52,12 +56,63 @@ cp .env.example .env
 
 # 2. Start the services
 docker compose up --build
-
-# 3. Initialize the database schema (links table)
-docker compose exec -T database psql -U url_user -d url_name < init.sql
 ```
 
+The database schema (the `links` table) is initialized automatically on first
+start: `init.sql` is mounted into the PostgreSQL container's
+`/docker-entrypoint-initdb.d/` directory and runs when the data volume is
+created. No manual step is required.
+
 The API is then available at http://localhost (port 80, via nginx).
+
+## Deployment (AWS + Terraform)
+
+The application is deployed to AWS as Infrastructure-as-Code. All resources are
+described in the [`terraform/`](./terraform) directory and provisioned with a
+single `terraform apply`.
+
+### Network flow
+
+```
+Browser
+   │  http
+   ▼
+Elastic IP ──► Internet Gateway ──► Public subnet ──► EC2 (t4g.small)
+                                                        │
+                                              Docker Compose stack:
+                                              nginx → flask → postgres / redis
+```
+
+### Resources provisioned
+
+VPC · public subnet · internet gateway · route table · security group ·
+SSH key pair · EC2 instance (Docker bootstrapped via cloud-init) · Elastic IP.
+
+### Design decisions
+
+- **Single-box deployment** — one `t4g.small` (ARM/Graviton) runs the whole
+  Compose stack. No NAT Gateway, no load balancer, no managed database: the
+  cheapest design that still demonstrates a full custom VPC.
+- **Elastic IP** — gives the demo a stable public address across stop/start.
+- **Least privilege on SSH** — port 22 is restricted to a single IP, while
+  80/443 are open to the world.
+- **Automated bootstrap** — a cloud-init `user-data` script installs Docker,
+  clones this repository, and launches the stack, so the instance is
+  self-configuring on first boot.
+
+### Deploy
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars   # then set your IP
+terraform init
+terraform plan
+terraform apply
+```
+
+Terraform outputs the public IP, the app URL, and a ready-to-use SSH command.
+See [`terraform/README.md`](./terraform/README.md) for details and the
+cost-control workflow.
 
 ## CI/CD Pipeline
 
@@ -71,4 +126,4 @@ Docker Hub credentials are managed via GitHub Secrets and never exposed in the c
 
 ## Tech Stack
 
-Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · GitHub Actions
+Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · GitHub Actions · AWS (EC2, VPC) · Terraform
