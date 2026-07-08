@@ -127,3 +127,29 @@ Docker Hub credentials are managed via GitHub Secrets and never exposed in the c
 ## Tech Stack
 
 Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · GitHub Actions · AWS (EC2, VPC) · Terraform
+
+
+## HTTPS setup (optional)
+
+The default deployment serves the app over HTTP. To enable HTTPS on a running instance:
+
+1. Point a domain at the instance's Elastic IP (e.g. a free DuckDNS subdomain).
+
+2. Install certbot and issue a certificate (standalone mode):
+
+```bash
+   sudo apt-get install -y certbot
+   sudo docker compose stop nginx
+   sudo certbot certonly --standalone -d <your-domain> \
+     --non-interactive --agree-tos -m <your-email>
+   sudo docker compose start nginx
+```
+
+3. Activate the HTTPS config and rebuild:
+
+```bash
+   cp nginx/nginx-https.conf nginx/nginx.conf
+   sudo docker compose up -d --build
+```
+
+Certbot sets up automatic renewal (certificates are valid for 90 days). The `nginx-https.conf` file contains the TLS-enabled server blocks: an HTTP→HTTPS redirect and the certificate configuration.
