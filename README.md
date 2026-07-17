@@ -1,6 +1,6 @@
 # URL Shortener
 
-A containerized URL shortening service (bit.ly-style) with an automated CI/CD pipeline, deployed to AWS with Terraform.
+A containerized URL shortening service (bit.ly-style) with an automated CI/CD pipeline and a Prometheus/Grafana observability stack, deployed to AWS with Terraform.
 
 When a long URL is submitted, the API generates a short code; visiting that code redirects to the original URL. The number of clicks per link is tracked in real time.
 
@@ -16,6 +16,8 @@ A multi-service application orchestrated with Docker Compose:
 | **nginx** | Reverse proxy in front of the application |
 | **PostgreSQL** | Durable storage of links (code → URL) |
 | **Redis** | Redirection cache and click counter |
+| **Prometheus** | Scrapes and stores application metrics |
+| **Grafana** | Dashboards and visual alerting on those metrics |
 
 Using two data stores is a deliberate choice: PostgreSQL durably stores the code/URL mapping (the source of truth), while Redis handles what needs to be fast and frequent — caching redirections (60 s expiry) and incrementing click counters.
 
@@ -124,9 +126,39 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push and 
 
 Docker Hub credentials are managed via GitHub Secrets and never exposed in the code.
 
+## Observability
+
+The stack ships with a full monitoring pipeline built on **Prometheus** and **Grafana**, so the service can be observed the way it would be in production instead of debugged blind.
+
+### How it works
+
+- The Flask app is instrumented with `prometheus-flask-exporter`, which exposes request metrics (count, latency, status codes) on a `/metrics` endpoint.
+- **Prometheus** scrapes that endpoint every 15 s over the internal Docker network (`flask:5000`) and stores the time series. Its scrape configuration lives in [`prometheus.yml`](./prometheus.yml).
+- **Grafana** reads from Prometheus as a data source and renders the dashboards. Dashboards and settings persist across restarts via a named Docker volume (`grafana_data`).
+
+### Dashboard
+
+A `url-shortener monitoring` dashboard tracks two key signals:
+
+| Panel | Query | What it shows |
+|-------|-------|---------------|
+| **Request throughput** | `rate(flask_http_request_total[5m])` | Requests per second, split by method and status |
+| **Error rate (%)** | `100 * sum(rate(flask_http_request_total{status=~"5.."}[5m])) / sum(rate(flask_http_request_total[5m]))` | Share of 5xx responses, with a red threshold at 5 % |
+
+The error-rate panel turns red as soon as the value crosses 5 %, giving an at-a-glance health signal instead of a wall of numbers.
+
+### Access
+
+Once the stack is running:
+
+- **Grafana** — http://localhost:3000 (default login `admin` / `admin`)
+- **Prometheus** — http://localhost:9090 (query console and target health)
+
+Flask's metrics endpoint is scraped internally over the Docker network and is not exposed publicly — only nginx faces the outside.
+
 ## Tech Stack
 
-Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · GitHub Actions · AWS (EC2, VPC) · Terraform
+Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · Prometheus · Grafana · GitHub Actions · AWS (EC2, VPC) · Terraform
 
 
 ## HTTPS setup (optional)
