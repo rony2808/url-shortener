@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request, redirect
+from prometheus_flask_exporter import PrometheusMetrics
 import psycopg2
 import redis
 import json
@@ -7,6 +8,7 @@ import random
 import string
 
 app = Flask(__name__)
+metrics = PrometheusMetrics(app)
 
 def get_db():
 	return psycopg2.connect(
