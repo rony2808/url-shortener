@@ -16,8 +16,9 @@ A multi-service application orchestrated with Docker Compose:
 | **nginx** | Reverse proxy in front of the application |
 | **PostgreSQL** | Durable storage of links (code → URL) |
 | **Redis** | Redirection cache and click counter |
-| **Prometheus** | Scrapes and stores application metrics |
-| **Grafana** | Dashboards and visual alerting on those metrics |
+| **Prometheus** | Scrapes and stores metrics |
+| **Grafana** | Dashboards and alerting |
+| **Node Exporter** | Exposes host system metrics (CPU, memory) |
 
 Using two data stores is a deliberate choice: PostgreSQL durably stores the code/URL mapping (the source of truth), while Redis handles what needs to be fast and frequent — caching redirections (60 s expiry) and incrementing click counters.
 
@@ -128,24 +129,35 @@ Docker Hub credentials are managed via GitHub Secrets and never exposed in the c
 
 ## Observability
 
-The stack ships with a full monitoring pipeline built on **Prometheus** and **Grafana**, so the service can be observed the way it would be in production instead of debugged blind.
+The stack ships with a full monitoring pipeline built on **Prometheus** and **Grafana**, so the service can be observed the way it would be in production instead of debugged blind. The dashboard is organised around Google's **four golden signals** (traffic, errors, latency, saturation).
 
 ### How it works
 
 - The Flask app is instrumented with `prometheus-flask-exporter`, which exposes request metrics (count, latency, status codes) on a `/metrics` endpoint.
-- **Prometheus** scrapes that endpoint every 15 s over the internal Docker network (`flask:5000`) and stores the time series. Its scrape configuration lives in [`prometheus.yml`](./prometheus.yml).
+- **Node Exporter** exposes host-level system metrics (CPU, memory, disk) on port 9100.
+- **Prometheus** scrapes both targets every 15 s over the internal Docker network and stores the time series. Its scrape configuration lives in [`prometheus.yml`](./prometheus.yml).
 - **Grafana** reads from Prometheus as a data source and renders the dashboards. Dashboards and settings persist across restarts via a named Docker volume (`grafana_data`).
 
-### Dashboard
+This separates two layers of monitoring: **application** health (is the app serving requests correctly?) via the Flask exporter, and **system** health (is the host running out of resources?) via Node Exporter.
 
-A `url-shortener monitoring` dashboard tracks two key signals:
+### Dashboard — the golden signals
 
-| Panel | Query | What it shows |
-|-------|-------|---------------|
-| **Request throughput** | `rate(flask_http_request_total[5m])` | Requests per second, split by method and status |
-| **Error rate (%)** | `100 * sum(rate(flask_http_request_total{status=~"5.."}[5m])) / sum(rate(flask_http_request_total[5m]))` | Share of 5xx responses, with a red threshold at 5 % |
+The `url-shortener monitoring` dashboard maps each panel to a golden signal:
 
-The error-rate panel turns red as soon as the value crosses 5 %, giving an at-a-glance health signal instead of a wall of numbers.
+| Golden signal | Panel | Query |
+|---------------|-------|-------|
+| **Traffic** | Request throughput | `rate(flask_http_request_total[5m])` |
+| **Errors** | Error rate (%) | `100 * sum(rate(flask_http_request_total{status=~"5.."}[5m])) / sum(rate(flask_http_request_total[5m]))` |
+| **Saturation** | CPU usage (%) | `100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)` |
+| **Saturation** | RAM usage (%) | `100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)` |
+
+Latency (the fourth signal) is captured as a histogram (`flask_http_request_duration_seconds`); percentiles such as p95 are available via `histogram_quantile(0.95, ...)`.
+
+The error-rate panel turns red past a 5 % threshold, and the CPU/RAM gauges shift green → amber → red as the host approaches saturation — giving an at-a-glance health signal instead of a wall of numbers.
+
+### Alerting
+
+A Grafana alert rule (`High error rate`) watches the error-rate query and fires when it stays **above 5 % for more than 2 minutes**. The 2-minute *pending period* is deliberate: it prevents a one-off spike from paging anyone, so only a sustained problem triggers the alert. The rule moves through three states — **Normal → Pending → Firing** — as the condition holds.
 
 ### Access
 
@@ -154,11 +166,11 @@ Once the stack is running:
 - **Grafana** — http://localhost:3000 (default login `admin` / `admin`)
 - **Prometheus** — http://localhost:9090 (query console and target health)
 
-Flask's metrics endpoint is scraped internally over the Docker network and is not exposed publicly — only nginx faces the outside.
+The Flask and Node Exporter metrics endpoints are scraped internally over the Docker network and are not exposed publicly — only nginx faces the outside.
 
 ## Tech Stack
 
-Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · Prometheus · Grafana · GitHub Actions · AWS (EC2, VPC) · Terraform
+Python · Flask · PostgreSQL · Redis · Docker · Docker Compose · nginx · Prometheus · Grafana · Node Exporter · GitHub Actions · AWS (EC2, VPC) · Terraform
 
 
 ## HTTPS setup (optional)
