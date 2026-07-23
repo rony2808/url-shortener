@@ -13,3 +13,13 @@ def test_shorten():
 	data = response.get_json()
 	assert "code" in data
 	assert "short_url" in data 
+	assert len(data["code"]) == 6
+
+def test_redirect():
+        client = app.test_client()
+        response = client.post('/shorten', json={"url": "https://www.google.com"})
+        data = response.get_json()
+        code = data["code"]
+        redirection = client.get(f'/{code}')
+        assert redirection.status_code == 302
+        assert redirection.headers["Location"] == "https://www.google.com"
